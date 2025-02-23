@@ -36,13 +36,16 @@ jobs:
           fetch-depth: 0
       - name: Check New Commit
         run: |
-          upStream=https://github.com/${{ matrix.userName }}/${{ matrix.repoName }}
+          sudo apt-get update && sudo apt-get install -y jq
+          upStream="https://github.com/${{ matrix.userName }}/${{ matrix.repoName }}"
           echo "upStream=$upStream" >> $GITHUB_ENV
-          commit=$(curl -sL $upStream/commits/${{ matrix.branchName }} |grep -o "/${{ matrix.userName }}/${{ matrix.repoName }}/commit/[a-z0-9]\+" |head -1 | cut -d\/ -f5)
+          commit=$(curl -s -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ matrix.userName }}/${{ matrix.repoName }}/commits/${{ matrix.branchName }}" | jq -r '.sha')
           if ! grep -q "$commit" README.md || [ "${{ inputs.rebuild }}" == "true" ]; then
             echo "commit=$commit" >> $GITHUB_ENV
             echo "commitS=${commit:0:7}" >> $GITHUB_ENV
           fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Checkout Source Code
         if: ${{ env.commit }}
         run: |
@@ -64,7 +67,6 @@ jobs:
         if: ${{ env.commit }}
         working-directory: TVBoxOSC
         run: |
-          #zip -q -x ".git/*" -x  ".github/*" -r source-${{ env.commitS }}.zip .
           tar -cJf source-${{ env.commitS }}.tar.xz --exclude=.git --exclude=.github *
       - name: Release Apk Sign
         if: ${{ env.commit }}
@@ -99,16 +101,13 @@ jobs:
         run: |
           rm -rf apk/
           mkdir -p apk/
-          for file in `find ~ -name "*release*.apk" -print`; do
-            # 获取文件的基本名称
+          for file in $(find . -name "*release*.apk" -print); do
             base=$(basename "$file")
-            # 如果文件是 TVBox_ 开头
             if [[ "$base" == TVBox_* ]]; then
               new_base=$(echo "$base" | sed "s/release/${{ matrix.userName }}_${{ env.tag }}/")
             else
               new_base="TVBox_${{ matrix.userName }}_${{ env.tag }}.apk"
             fi
-            # 移动并重命名文件
             mv "$file" "apk/$new_base"
           done
           mv source-${{ env.commitS }}.* apk/
@@ -119,7 +118,9 @@ jobs:
           lastCommit=$(grep "${{ matrix.userName }}\/${{ matrix.repoName }}" ${{ github.workspace }}/README.md |grep -o '[a-z0-9]\{40\}')
           export LESSCHARSET=utf-8
           echo -e "Credit: [${{ matrix.userName }}](${{ env.upStream }})\nCommit: ${{ env.commit }}\nChangelog:\n\`\`\`" > apk/${{ matrix.userName }}-Release.log
-          if [ "${{ env.commit }}" == "${lastCommit}" ]; then
+          if [ -z "$lastCommit" ]; then
+            git log --pretty=format:%B ${{ env.commitS }} -1 |sed -e "s# \{2,\}#\n#g" -e "/^Merge \(pull\|branch\|remote\)/d" -e '/^$/d' |cat -n |sort -k2,2 -k1,1n |uniq -f1 |sort -k1,1n |cut -f2- >> apk/${{ matrix.userName }}-Release.log
+          elif [ "${{ env.commit }}" == "$lastCommit" ]; then
             git log --pretty=format:%B ${{ env.commitS }} -1 |sed -e "s# \{2,\}#\n#g" -e "/^Merge \(pull\|branch\|remote\)/d" -e '/^$/d' |cat -n |sort -k2,2 -k1,1n |uniq -f1 |sort -k1,1n |cut -f2- >> apk/${{ matrix.userName }}-Release.log
           else
             git log --pretty=format:%B ${{ env.commitS }}...${lastCommit:0:7} |sed -e "s# \{2,\}#\n#g" -e "/^Merge \(pull\|branch\|remote\)/d" -e '/^$/d' |cat -n |sort -k2,2 -k1,1n |uniq -f1 |sort -k1,1n |cut -f2- >> apk/${{ matrix.userName }}-Release.log
@@ -141,7 +142,7 @@ jobs:
         if: ${{ env.commit }}
         with:
           name: ${{ env.tag }}
-          tag: ${{ env.tag }}
+          标签: ${{ env.tag }}
           bodyFile: TVBoxOSC/apk/${{ matrix.userName }}-Release.log
           allowUpdates: true
           removeArtifacts: true
@@ -157,6 +158,6 @@ jobs:
         uses: Mattraks/delete-workflow-runs@main
         with:
           token: ${{ github.token }}
-          repository: ${{ github.repository }}
+          仓库: ${{ github.repository }}
           retain_days: 14
           keep_minimum_runs: 10
