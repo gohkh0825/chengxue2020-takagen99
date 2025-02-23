@@ -25,8 +25,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - userName: chengxue2020
-            repoName: takagen99
+          - userName: gohkh0825
+            repoName: chengxue2020-takagen99
             branchName: main
             java_ver: 17
     steps:
