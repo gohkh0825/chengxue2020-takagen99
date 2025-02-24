@@ -34,40 +34,73 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # 获取代码仓库的完整历史记录
+
       - name: Check New Commit
         run: |
+          # 安装 jq 工具，用于解析 JSON 数据
           sudo apt-get update && sudo apt-get install -y jq
           upStream="https://github.com/${{ matrix.userName }}/${{ matrix.repoName }}"
           echo "upStream=$upStream" >> $GITHUB_ENV
+          # 使用 GitHub API 获取最新提交的哈希值
           commit=$(curl -s -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ matrix.userName }}/${{ matrix.repoName }}/commits/${{ matrix.branchName }}" | jq -r '.sha')
+          if [ $? -ne 0 ]; then
+            echo "Failed to fetch latest commit from GitHub API"
+            exit 1
+          fi
           if ! grep -q "$commit" README.md || [ "${{ inputs.rebuild }}" == "true" ]; then
             echo "commit=$commit" >> $GITHUB_ENV
             echo "commitS=${commit:0:7}" >> $GITHUB_ENV
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Checkout Source Code
         if: ${{ env.commit }}
         run: |
+          # 克隆上游仓库代码
           git clone ${{ env.upStream }} TVBoxOSC
+          if [ $? -ne 0 ]; then
+            echo "Failed to clone repository ${{ env.upStream }}"
+            exit 1
+          fi
           cd TVBoxOSC
+          # 切换到指定的提交版本
           git checkout ${{ env.commit }}
-          echo "tag=$(git log --date=format:'%Y%m%d-%H%M' --pretty=format:%cd ${{ env.commitS }} -1)" >> $GITHUB_ENV
+          if [ $? -ne 0 ]; then
+            echo "Failed to checkout commit ${{ env.commit }}"
+            exit 1
+          fi
+          # 生成版本标签
+          tag=$(git log --date=format:'%Y%m%d-%H%M' --pretty=format:%cd ${{ env.commitS }} -1)
+          if [ $? -ne 0 ]; then
+            echo "Failed to generate tag from commit log"
+            exit 1
+          fi
+          echo "tag=$tag" >> $GITHUB_ENV
       - name: Extra Modify
         if: ${{ env.commit }}
         working-directory: TVBoxOSC
         run: |
           echo 'crosswalk源，防挂'
+          # 检查 build.gradle 文件中是否包含 crosswalk 相关配置
           if grep -q 'crosswalk' build.gradle; then
             sed -i "/crosswalk/a\        maven { url 'https://o0halflife0o.github.io/crosswalk/releases/crosswalk/android/maven2' }" build.gradle
           else
             sed -i "/jitpack.io/a\        maven { url 'https://o0halflife0o.github.io/crosswalk/releases/crosswalk/android/maven2' }" build.gradle
           fi
+
       - name: Compress Source Code
         if: ${{ env.commit }}
         working-directory: TVBoxOSC
         run: |
+          # 压缩源代码，排除 .git 和 .github 目录
           tar -cJf source-${{ env.commitS }}.tar.xz --exclude=.git --exclude=.github *
+          if [ $? -ne 0 ]; then
+            echo "Failed to compress source code"
+            exit 1
+          fi
+
       - name: Release Apk Sign
         if: ${{ env.commit }}
         working-directory: TVBoxOSC
@@ -76,31 +109,56 @@ jobs:
           signingConfig='ICAgICAgICAgICAgaWYgKHByb2plY3QuaGFzUHJvcGVydHkoIlJFTEVBU0VfU1RPUkVfRklMRSIpKSB7XAogICAgICAgICAgICAgICAgc2lnbmluZ0NvbmZpZyBzaWduaW5nQ29uZmlncy5teUNvbmZpZ1wKICAgICAgICAgICAgfVwK'
           signingConfigs="$(echo "$signingConfigs" |base64 -d )"
           signingConfig="$(echo "$signingConfig" |base64 -d )"
+          # 修改 app/build.gradle 文件，添加签名配置
           sed -i -e "/defaultConfig {/i\\$signingConfigs " -e "/debug {/a\\$signingConfig " -e "/release {/a\\$signingConfig " app/build.gradle
+          if [ $? -ne 0 ]; then
+            echo "Failed to modify app/build.gradle for signing configuration"
+            exit 1
+          fi
+          # 复制签名密钥库文件
           cp -f ${{ github.workspace }}/.github/workflows/TVBoxOSC.jks app/TVBoxOSC.jks
+          if [ $? -ne 0 ]; then
+            echo "Failed to copy signing keystore file"
+            exit 1
+          fi
+          # 修改 gradle.properties 文件，添加签名相关属性
           sed -i '$a\RELEASE_STORE_FILE=./TVBoxOSC.jks'     ./gradle.properties
           sed -i '$a\RELEASE_KEY_ALIAS=TVBoxOSC'            ./gradle.properties
           sed -i '$a\RELEASE_STORE_PASSWORD=TVBoxOSC'       ./gradle.properties
           sed -i '$a\RELEASE_KEY_PASSWORD=TVBoxOSC'         ./gradle.properties
+
       - uses: actions/setup-java@v4
         if: ${{ matrix.java_ver }}
         with:
           distribution: temurin
           java-version: ${{ matrix.java_ver }}
+          # 设置 Java 环境
+
       - uses: gradle/actions/setup-gradle@v4
         if: ${{ env.commit }}
+        # 设置 Gradle 环境
+
       - name: Build With Gradle
         if: ${{ env.commit }}
         working-directory: TVBoxOSC
         run: |
+          # 赋予 gradlew 可执行权限
           chmod +x gradlew
+          # 使用 Gradle 构建项目
           ./gradlew assemblerelease --build-cache --parallel --daemon --warning-mode all
+          if [ $? -ne 0 ]; then
+            echo "Gradle build failed"
+            exit 1
+          fi
+
       - name: Prepare App
         if: ${{ env.commit }}
         working-directory: TVBoxOSC
         run: |
+          # 删除并重新创建 apk 目录
           rm -rf apk/
           mkdir -p apk/
+          # 查找所有包含 release 的 APK 文件并进行重命名和移动操作
           for file in $(find . -name "*release*.apk" -print); do
             base=$(basename "$file")
             if [[ "$base" == TVBox_* ]]; then
@@ -110,22 +168,41 @@ jobs:
             fi
             mv "$file" "apk/$new_base"
           done
+          # 移动压缩后的源代码文件到 apk 目录
           mv source-${{ env.commitS }}.* apk/
+
       - name: Release Note
         if: ${{ env.commit }}
         working-directory: TVBoxOSC
         run: |
-          lastCommit=$(grep "${{ matrix.userName }}\/${{ matrix.repoName }}" ${{ github.workspace }}/README.md |grep -o '[a-z0-9]\{40\}')
+          readme_file="${{ github.workspace }}/README.md"
+          # 检查 README.md 文件是否存在
+          if [ ! -f "$readme_file" ]; then
+            echo "README.md file not found"
+            exit 1
+          fi
+          # 从 README.md 文件中提取上次提交的哈希值
+          lastCommit=$(grep "${{ matrix.userName }}\/${{ matrix.repoName }}" "$readme_file" |grep -o '[a-z0-9]\{40\}')
           export LESSCHARSET=utf-8
+          # 生成发布说明文件的初始内容
           echo -e "Credit: [${{ matrix.userName }}](${{ env.upStream }})\nCommit: ${{ env.commit }}\nChangelog:\n\`\`\`" > apk/${{ matrix.userName }}-Release.log
           if [ -z "$lastCommit" ]; then
+            # 如果没有找到上次提交的哈希值，只记录当前提交的日志
             git log --pretty=format:%B ${{ env.commitS }} -1 |sed -e "s# \{2,\}#\n#g" -e "/^Merge \(pull\|branch\|remote\)/d" -e '/^$/d' |cat -n |sort -k2,2 -k1,1n |uniq -f1 |sort -k1,1n |cut -f2- >> apk/${{ matrix.userName }}-Release.log
           elif [ "${{ env.commit }}" == "$lastCommit" ]; then
+            # 如果当前提交和上次提交相同，只记录当前提交的日志
             git log --pretty=format:%B ${{ env.commitS }} -1 |sed -e "s# \{2,\}#\n#g" -e "/^Merge \(pull\|branch\|remote\)/d" -e '/^$/d' |cat -n |sort -k2,2 -k1,1n |uniq -f1 |sort -k1,1n |cut -f2- >> apk/${{ matrix.userName }}-Release.log
           else
+            # 验证提交哈希的有效性
+            if ! git rev-parse --verify ${{ env.commitS }} >/dev/null 2>&1 || ! git rev-parse --verify ${lastCommit:0:7} >/dev/null 2>&1; then
+              echo "Invalid commit hash"
+              exit 1
+            fi
+            # 记录当前提交和上次提交之间的日志
             git log --pretty=format:%B ${{ env.commitS }}...${lastCommit:0:7} |sed -e "s# \{2,\}#\n#g" -e "/^Merge \(pull\|branch\|remote\)/d" -e '/^$/d' |cat -n |sort -k2,2 -k1,1n |uniq -f1 |sort -k1,1n |cut -f2- >> apk/${{ matrix.userName }}-Release.log
           fi
           echo -e '\n```' >> apk/${{ matrix.userName }}-Release.log
+
       - name: Upload App To Artifact
         uses: actions/upload-artifact@v4
         if: ${{ env.commit }}
@@ -133,22 +210,27 @@ jobs:
           name: ${{ matrix.userName }}-${{ matrix.repoName }}
           path: |
             TVBoxOSC/apk/*
+          # 上传 APK 文件和压缩后的源代码文件作为制品
+
       - name: Whether Or Not to Publish
         if: ${{ inputs.donotpublish && env.commit }}
         run: |
           echo "commit=" >> $GITHUB_ENV
+          # 根据输入决定是否发布新版本
+
       - name: Release and Upload Assets
         uses: ncipollo/release-action@v1
         if: ${{ env.commit }}
         with:
           name: ${{ env.tag }}
-          标签: ${{ env.tag }}
+          tag: ${{ env.tag }}
           bodyFile: TVBoxOSC/apk/${{ matrix.userName }}-Release.log
           allowUpdates: true
           removeArtifacts: true
           artifacts: |
             TVBoxOSC/apk/*.apk
             TVBoxOSC/apk/source-${{ env.commitS }}.*
+          # 创建新版本发布并上传相关资产
 
   clean:
     needs: build
@@ -161,3 +243,4 @@ jobs:
           仓库: ${{ github.repository }}
           retain_days: 14
           keep_minimum_runs: 10
+          # 删除旧的工作流运行记录和制品，保留最近 14 天的记录，至少保留 10 条运行记录
