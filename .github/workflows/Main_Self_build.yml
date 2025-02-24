@@ -1,8 +1,8 @@
 name: Main Self build
 
-on:
+于:
   push:
-    branches:
+    分支:
       - main
   pull_request:
   schedule:
@@ -175,33 +175,56 @@ jobs:
         if: ${{ env.commit }}
         working-directory: TVBoxOSC
         run: |
-          readme_file="${{ github.workspace }}/README.md"
-          # 检查 README.md 文件是否存在
-          if [ ! -f "$readme_file" ]; then
-            echo "README.md file not found"
-            exit 1
-          fi
-          # 从 README.md 文件中提取上次提交的哈希值
-          lastCommit=$(grep "${{ matrix.userName }}\/${{ matrix.repoName }}" "$readme_file" |grep -o '[a-z0-9]\{40\}')
-          export LESSCHARSET=utf-8
-          # 生成发布说明文件的初始内容
-          echo -e "Credit: [${{ matrix.userName }}](${{ env.upStream }})\nCommit: ${{ env.commit }}\nChangelog:\n\`\`\`" > apk/${{ matrix.userName }}-Release.log
-          if [ -z "$lastCommit" ]; then
-            # 如果没有找到上次提交的哈希值，只记录当前提交的日志
-            git log --pretty=format:%B ${{ env.commitS }} -1 |sed -e "s# \{2,\}#\n#g" -e "/^Merge \(pull\|branch\|remote\)/d" -e '/^$/d' |cat -n |sort -k2,2 -k1,1n |uniq -f1 |sort -k1,1n |cut -f2- >> apk/${{ matrix.userName }}-Release.log
-          elif [ "${{ env.commit }}" == "$lastCommit" ]; then
-            # 如果当前提交和上次提交相同，只记录当前提交的日志
-            git log --pretty=format:%B ${{ env.commitS }} -1 |sed -e "s# \{2,\}#\n#g" -e "/^Merge \(pull\|branch\|remote\)/d" -e '/^$/d' |cat -n |sort -k2,2 -k1,1n |uniq -f1 |sort -k1,1n |cut -f2- >> apk/${{ matrix.userName }}-Release.log
-          else
-            # 验证提交哈希的有效性
-            if ! git rev-parse --verify ${{ env.commitS }} >/dev/null 2>&1 || ! git rev-parse --verify ${lastCommit:0:7} >/dev/null 2>&1; then
-              echo "Invalid commit hash"
-              exit 1
-            fi
-            # 记录当前提交和上次提交之间的日志
-            git log --pretty=format:%B ${{ env.commitS }}...${lastCommit:0:7} |sed -e "s# \{2,\}#\n#g" -e "/^Merge \(pull\|branch\|remote\)/d" -e '/^$/d' |cat -n |sort -k2,2 -k1,1n |uniq -f1 |sort -k1,1n |cut -f2- >> apk/${{ matrix.userName }}-Release.log
-          fi
-          echo -e '\n```' >> apk/${{ matrix.userName }}-Release.log
+          readme_file="/home/runner/work/chengxue2020-takagen99/chengxue2020-takagen99/README.md"
+# 检查 README.md 文件是否存在
+if [ ! -f "$readme_file" ]; then
+    echo "README.md file not found"
+    exit 1
+fi
+
+# 检查当前目录是否为有效的 Git 仓库
+if [ ! -d ".git" ]; then
+    echo "Not a valid Git repository. Current directory: $(pwd)"
+    exit 1
+fi
+
+# 从 README.md 文件中提取上次提交的哈希值
+lastCommit=$(grep "gohkh0825\/chengxue2020-takagen99" "$readme_file" |grep -o '[a-z0-9]\{40\}')
+
+# 创建 apk 目录并设置权限
+apk_dir="apk"
+if [ ! -d "$apk_dir" ]; then
+    mkdir -p "$apk_dir"
+    chmod 777 "$apk_dir"
+fi
+
+export LESSCHARSET=utf-8
+# 生成发布说明文件的初始内容
+echo -e "Credit: [gohkh0825](https://github.com/gohkh0825/chengxue2020-takagen99)\nCommit: a795c96a33033d12cb11eea6d04de3fefd63bf2d\nChangelog:\n\`\`\`" > "$apk_dir/gohkh0825-Release.log"
+
+if [ -z "$lastCommit" ]; then
+    # 如果没有找到上次提交的哈希值，只记录当前提交的日志
+    git log --pretty=format:%B a795c96 -1 |sed -e "s# \{2,\}#\n#g" -e "/^Merge \(pull\|branch\|remote\)/d" -e '/^$/d' |cat -n |sort -k2,2 -k1,1n |uniq -f1 |sort -k1,1n |cut -f2- >> "$apk_dir/gohkh0825-Release.log"
+elif [ "a795c96a33033d12cb11eea6d04de3fefd63bf2d" == "$lastCommit" ]; then
+    # 如果当前提交和上次提交相同，只记录当前提交的日志
+    git log --pretty=format:%B a795c96 -1 |sed -e "s# \{2,\}#\n#g" -e "/^Merge \(pull\|branch\|remote\)/d" -e '/^$/d' |cat -n |sort -k2,2 -k1,1n |uniq -f1 |sort -k1,1n |cut -f2- >> "$apk_dir/gohkh0825-Release.log"
+else
+    # 验证提交哈希的有效性
+    if ! git rev-parse --verify a795c96 >/dev/null 2>&1; then
+        git rev-parse --verify a795c96
+        echo "Invalid current commit hash: a795c96"
+        exit 1
+    fi
+    last_commit_short="${lastCommit:0:7}"
+    if ! git rev-parse --verify "$last_commit_short" >/dev/null 2>&1; then
+        git rev-parse --verify "$last_commit_short"
+        echo "Invalid last commit hash: $last_commit_short"
+        exit 1
+    fi
+    # 记录当前提交和上次提交之间的日志
+    git log --pretty=format:%B a795c96...$last_commit_short |sed -e "s# \{2,\}#\n#g" -e "/^Merge \(pull\|branch\|remote\)/d" -e '/^$/d' |cat -n |sort -k2,2 -k1,1n |uniq -f1 |sort -k1,1n |cut -f2- >> "$apk_dir/gohkh0825-Release.log"
+fi
+echo -e '\n```' >> "$apk_dir/gohkh0825-Release.log"
 
       - name: Upload App To Artifact
         uses: actions/upload-artifact@v4
@@ -223,7 +246,7 @@ jobs:
         if: ${{ env.commit }}
         with:
           name: ${{ env.tag }}
-          tag: ${{ env.tag }}
+          标签: ${{ env.tag }}
           bodyFile: TVBoxOSC/apk/${{ matrix.userName }}-Release.log
           allowUpdates: true
           removeArtifacts: true
